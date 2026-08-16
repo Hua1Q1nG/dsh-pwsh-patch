@@ -1,0 +1,9 @@
+# dsh-pwsh-patch — pwsh 硬化补丁（宿主自愈）
+#
+# 宿主插件：每次 DSH 启动时检测安装目录里 dsh-pwsh-local / dsh-tool-pwsh 的
+# pwsh 硬化补丁，被桌面更新覆盖后自动重打（幂等）；上游漂移时显式报警并写入
+# <DSH_HOME>/pwsh-patch/state.json。浏览器半边：设置 →「pwsh 硬化补丁」状态页。
+
+- insert:
+    - id: pwsh-patch
+      name: 'dsh-pwsh-patch'
