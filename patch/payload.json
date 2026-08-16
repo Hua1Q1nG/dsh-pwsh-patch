@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "name": "dsh-pwsh-hardening",
+  "baseline": {
+    "desktopVersion": "0.1.9",
+    "coreVersion": "0.1.0-rc.6",
+    "note": "Applies to DSH Desktop 0.1.9 with @deepseek-ai/* 0.1.0-rc.6. If the installer ships a newer baseline, the applier reports drift instead of guessing."
+  },
+  "targets": [
+    {
+      "rel": "resources/app/node_modules/@deepseek-ai/dsh-pwsh-local/lib/index.js",
+      "hunks": [
+        {
+          "id": "env-overrides",
+          "find": "/**\n* Model-friendly environment overrides for PowerShell: disable colors and\n* pagers that would garble tool output. `TERM=dumb` is a POSIX concept and is\n* deliberately absent; `NO_COLOR` is honored by modern pwsh renderers.\n*/\nconst ENV_OVERRIDES = {\n\tNO_COLOR: \"1\",\n\tPAGER: \"cat\",\n\tGIT_PAGER: \"cat\"\n};",
+          "replace": "/**\n* Model-friendly environment overrides for PowerShell: disable colors,\n* pagers, first-run telemetry notices, and update-check banners that would\n* garble or pad tool output. `TERM=dumb` is a POSIX concept and is\n* deliberately absent; `NO_COLOR` is honored by modern pwsh renderers.\n*/\nconst ENV_OVERRIDES = {\n\tNO_COLOR: \"1\",\n\tPAGER: \"cat\",\n\tGIT_PAGER: \"cat\",\n\tPOWERSHELL_TELEMETRY_OPTOUT: \"1\",\n\tPOWERSHELL_UPDATECHECK: \"Off\"\n};"
+        },
+        {
+          "id": "command-preamble",
+          "find": "/**\n* UTF-8 output pinning prepended to every command. The subprocess collector\n* decodes output bytes as UTF-8, but Windows PowerShell 5.1 (the last-resort\n* executable fallback) writes the console/OEM code page by default, which\n* garbles non-ASCII output; pwsh 7 defaults to UTF-8 and is unaffected. The\n* statements ride on line 1 after `; ` separators so PowerShell error line\n* numbers stay accurate.\n*/\nconst ENCODING_PREAMBLE = \"[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false); \";",
+          "replace": "/**\n* Model-facing command preamble prepended to every command, hardening the\n* shell against the failure modes that hurt agents most:\n* - `$ErrorActionPreference='Stop'` makes cmdlet errors TERMINATING, so a\n*   failing command can no longer exit 0 with the error buried on stderr.\n* - `$ProgressPreference='SilentlyContinue'` silences progress-bar noise\n*   (Windows PowerShell 5.1 renders progress into redirected output, and it\n*   also slows Invoke-WebRequest).\n* - `$PSStyle.OutputRendering='PlainText'` strips ANSI styling (PowerShell\n*   7.2+; the Get-Variable guard keeps 5.1 and 7.0/7.1 safe).\n* - `$PSNativeCommandUseErrorActionPreference=$true` upgrades native-command\n*   failures to terminating errors (PowerShell 7.3+; guarded for 5.1, where\n*   the variable does not exist — there only cmdlet errors fail fast).\n* - UTF-8 output pinning: the subprocess collector decodes bytes as UTF-8,\n*   but Windows PowerShell 5.1 writes the console/OEM code page by default,\n*   which garbles non-ASCII output; pwsh 7 defaults to UTF-8 and is\n*   unaffected.\n* The statements ride on line 1 after `; ` separators so PowerShell error\n* line numbers stay accurate.\n*/\nconst COMMAND_PREAMBLE = \"$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; if (Get-Variable PSStyle -ErrorAction Ignore) { $PSStyle.OutputRendering='PlainText' }; if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction Ignore) { $PSNativeCommandUseErrorActionPreference=$true }; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false); \";"
+        },
+        {
+          "id": "argv-template",
+          "find": "`${ENCODING_PREAMBLE}${spec.command}`",
+          "replace": "`${COMMAND_PREAMBLE}${spec.command}`"
+        },
+        {
+          "id": "export-alias",
+          "find": "export { ENCODING_PREAMBLE, ENV_OVERRIDES, PwshLocalExecutor, PwshLocalExecutor as default, assertServiceablePwshConfig, candidatePwshPaths, resolvePwshPath };",
+          "replace": "export { COMMAND_PREAMBLE, COMMAND_PREAMBLE as ENCODING_PREAMBLE, ENV_OVERRIDES, PwshLocalExecutor, PwshLocalExecutor as default, assertServiceablePwshConfig, candidatePwshPaths, resolvePwshPath };"
+        }
+      ]
+    },
+    {
+      "rel": "resources/app/node_modules/@deepseek-ai/dsh-tool-pwsh/lib/index.js",
+      "hunks": [
+        {
+          "id": "tool-description",
+          "find": "Non-zero exits are reported as `[exit code: N]`. Current harness environment facts are exposed through managed `$env:DSH_*` variables; inspect them when needed.",
+          "replace": "Non-zero exits are reported as `[exit code: N]`. Errors fail fast: the shell sets `$ErrorActionPreference` to `Stop`, so a failing cmdlet aborts the rest of the script (terminating error, non-zero exit) — wrap intentional error handling in try/catch. When a command's output must be parsed, print the final value with `ConvertTo-Json -Compress` (add `-Depth N` for deep structures) instead of formatted tables. Current harness environment facts are exposed through managed `$env:DSH_*` variables; inspect them when needed."
+        },
+        {
+          "id": "system-prompt-text",
+          "find": "text: \"Non-zero exits are reported as `[exit code: N]` markers; investigate failures before moving on. On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure.\"",
+          "replace": "text: \"Non-zero exits are reported as `[exit code: N]` markers; investigate failures before moving on. pwsh commands fail fast: a failing cmdlet (or native command on PowerShell 7.3+) aborts the script and reports the error — do not write commands that depend on errors continuing silently. On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure.\""
+        }
+      ]
+    }
+  ]
+}
