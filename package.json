@@ -1,0 +1,43 @@
+{
+  "name": "dsh-pwsh-patch",
+  "version": "0.1.0",
+  "description": "DSH host plugin: re-applies the pwsh agent-hardening patch (fail-fast errors, silent progress, plain-text output, UTF-8 pinning) to the desktop's @deepseek-ai/dsh-pwsh-local and dsh-tool-pwsh packages on every boot, so DSH desktop updates cannot silently undo it.",
+  "license": "MIT",
+  "type": "module",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "patch",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "patch",
+    "powershell"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
