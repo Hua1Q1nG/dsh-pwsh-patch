@@ -1,0 +1,88 @@
+# dsh-pwsh-hardening patch
+# unified diff for human review / upstream porting; the applier uses payload.json
+
+diff --git a/resources/app/node_modules/@deepseek-ai/dsh-pwsh-local/lib/index.js b/resources/app/node_modules/@deepseek-ai/dsh-pwsh-local/lib/index.js
+@@ -139,24 +139,39 @@ var __disposeResources = (function(SuppressedError) {
+ 	return e.name = "SuppressedError", e.error = error, e.suppressed = suppressed, e;
+ });
+ /**
+-* Model-friendly environment overrides for PowerShell: disable colors and
+-* pagers that would garble tool output. `TERM=dumb` is a POSIX concept and is
++* Model-friendly environment overrides for PowerShell: disable colors,
++* pagers, first-run telemetry notices, and update-check banners that would
++* garble or pad tool output. `TERM=dumb` is a POSIX concept and is
+ * deliberately absent; `NO_COLOR` is honored by modern pwsh renderers.
+ */
+ const ENV_OVERRIDES = {
+ 	NO_COLOR: "1",
+ 	PAGER: "cat",
+-	GIT_PAGER: "cat"
++	GIT_PAGER: "cat",
++	POWERSHELL_TELEMETRY_OPTOUT: "1",
++	POWERSHELL_UPDATECHECK: "Off"
+ };
+ /**
+-* UTF-8 output pinning prepended to every command. The subprocess collector
+-* decodes output bytes as UTF-8, but Windows PowerShell 5.1 (the last-resort
+-* executable fallback) writes the console/OEM code page by default, which
+-* garbles non-ASCII output; pwsh 7 defaults to UTF-8 and is unaffected. The
+-* statements ride on line 1 after `; ` separators so PowerShell error line
+-* numbers stay accurate.
++* Model-facing command preamble prepended to every command, hardening the
++* shell against the failure modes that hurt agents most:
++* - `$ErrorActionPreference='Stop'` makes cmdlet errors TERMINATING, so a
++*   failing command can no longer exit 0 with the error buried on stderr.
++* - `$ProgressPreference='SilentlyContinue'` silences progress-bar noise
++*   (Windows PowerShell 5.1 renders progress into redirected output, and it
++*   also slows Invoke-WebRequest).
++* - `$PSStyle.OutputRendering='PlainText'` strips ANSI styling (PowerShell
++*   7.2+; the Get-Variable guard keeps 5.1 and 7.0/7.1 safe).
++* - `$PSNativeCommandUseErrorActionPreference=$true` upgrades native-command
++*   failures to terminating errors (PowerShell 7.3+; guarded for 5.1, where
++*   the variable does not exist — there only cmdlet errors fail fast).
++* - UTF-8 output pinning: the subprocess collector decodes bytes as UTF-8,
++*   but Windows PowerShell 5.1 writes the console/OEM code page by default,
++*   which garbles non-ASCII output; pwsh 7 defaults to UTF-8 and is
++*   unaffected.
++* The statements ride on line 1 after `; ` separators so PowerShell error
++* line numbers stay accurate.
+ */
+-const ENCODING_PREAMBLE = "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false); ";
++const COMMAND_PREAMBLE = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; if (Get-Variable PSStyle -ErrorAction Ignore) { $PSStyle.OutputRendering='PlainText' }; if (Get-Variable PSNativeCommandUseErrorActionPreference -ErrorAction Ignore) { $PSNativeCommandUseErrorActionPreference=$true }; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [System.Text.UTF8Encoding]::new($false); ";
+ /** Default SIGTERM→SIGKILL grace period (the `graceMs` config). */
+ const DEFAULT_GRACE_MS = 3e3;
+ /** Default per-stream spill cap (the `maxSpillBytes` config). */
+@@ -274,7 +289,7 @@ var PwshLocalExecutor = class PwshLocalExecutor extends ShellExecutor {
+ 			"-NoProfile",
+ 			"-NonInteractive",
+ 			"-Command",
+-			`${ENCODING_PREAMBLE}${spec.command}`
++			`${COMMAND_PREAMBLE}${spec.command}`
+ 		];
+ 	}
+ 	/** Map one resolved spec plus its argv onto a fully-specified subprocess spawn. */
+@@ -408,4 +423,4 @@ var PwshLocalExecutor = class PwshLocalExecutor extends ShellExecutor {
+ 	onProcessDone(_proc, _stderr, _spawnFailed, _spawnError) {}
+ };
+ //#endregion
+-export { ENCODING_PREAMBLE, ENV_OVERRIDES, PwshLocalExecutor, PwshLocalExecutor as default, assertServiceablePwshConfig, candidatePwshPaths, resolvePwshPath };
++export { COMMAND_PREAMBLE, COMMAND_PREAMBLE as ENCODING_PREAMBLE, ENV_OVERRIDES, PwshLocalExecutor, PwshLocalExecutor as default, assertServiceablePwshConfig, candidatePwshPaths, resolvePwshPath };
+diff --git a/resources/app/node_modules/@deepseek-ai/dsh-tool-pwsh/lib/index.js b/resources/app/node_modules/@deepseek-ai/dsh-tool-pwsh/lib/index.js
+@@ -139,7 +139,7 @@ function validatePwshArgs(args) {
+ 	validateEscalationArgs(args.sandbox_permissions, args.justification);
+ }
+ function pwshDescription(backgroundEnabled, escalationModes) {
+-	const base = "Execute a PowerShell command (`pwsh -Command`) and return its stdout/stderr. Each call runs in a fresh pwsh process: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. Paths use native Windows form (`C:\\...`); read environment variables with `$env:NAME`. Non-zero exits are reported as `[exit code: N]`. Current harness environment facts are exposed through managed `$env:DSH_*` variables; inspect them when needed. Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. On Windows a force-killed command settles as `[exit code: 1]` without a signal marker — treat it as an interruption, not a command failure. " + (backgroundEnabled ? "Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`." : "Background execution is not available; long-running commands must finish within the timeout.");
++	const base = "Execute a PowerShell command (`pwsh -Command`) and return its stdout/stderr. Each call runs in a fresh pwsh process: no state (cwd, variables, functions) persists between calls — pass `workdir` instead of using `cd`. Paths use native Windows form (`C:\\...`); read environment variables with `$env:NAME`. Non-zero exits are reported as `[exit code: N]`. Errors fail fast: the shell sets `$ErrorActionPreference` to `Stop`, so a failing cmdlet aborts the rest of the script (terminating error, non-zero exit) — wrap intentional error handling in try/catch. When a command's output must be parsed, print the final value with `ConvertTo-Json -Compress` (add `-Depth N` for deep structures) instead of formatted tables. Current harness environment facts are exposed through managed `$env:DSH_*` variables; inspect them when needed. Commands may run under a file sandbox; a blocked file operation is reported as `[sandbox: file access denied under <mode> mode]` — a policy denial, not a bug in the command; do not retry another way. Long output is truncated to its tail; the full output is saved to a file whose path is reported when available. On Windows a force-killed command settles as `[exit code: 1]` without a signal marker — treat it as an interruption, not a command failure. " + (backgroundEnabled ? "Set `run_in_background: true` for long-running commands: the call returns a job id immediately; read its output with `job_output` and stop it with `job_kill`." : "Background execution is not available; long-running commands must finish within the timeout.");
+ 	if (escalationModes.length === 0) return base;
+ 	return base + " Under the Windows sandbox, read-only pwsh runs in PowerShell ConstrainedLanguage mode, while workspace-write stays in FullLanguage unless host policy says otherwise. In read-only, prefer cmdlets and core types (`[string]`, `[datetime]`, `[regex]`, `[guid]`); .NET static calls (`[System.IO.*]::`, `[math]::`), `Add-Type`, COM objects, and reflection fail with \"only core types\" errors. `-f` formatting, property access, and core cmdlets work. In both confined modes, programs cannot open named pipes, so a command that captures another program's output through piped stdio (Node.js `child_process.spawn`/`exec` with the default `stdio: 'pipe'`) fails with EPERM, while `stdio: 'inherit'` and `stdio: 'ignore'` spawns work and PowerShell's own pipelines are unaffected. That EPERM is the documented boundary: do not retry the command another way — escalate the exact command once or restructure it to avoid capturing output. Attempting a command the sandbox may deny is safe and expected: run it and read the marker rather than assuming the denial. When a command is denied and a wider mode would let it succeed, escalate immediately in the same turn — the one sanctioned exception to a denial: retry the exact same command once with `sandbox_permissions` (the narrowest wider mode that suffices) plus a one-sentence `justification`. Do not detour through chat to ask permission first — the approval prompt raised by that retry is how the user consents. If the session states approval prompts are disabled, there is no exception: a denial is final — do not set `sandbox_permissions`. Never escalate speculatively: ground the request in a real denial — normally the one this command just hit; escalating up front is fine only when this session already denied the same access. A rejected escalation is final for that command — stop and explain, never work around it — but it does not forbid attempting or escalating other commands later.";
+ }
+@@ -228,7 +228,7 @@ function apply(ctx, config = {}) {
+ 	ctx.systemPrompt.section({
+ 		name: "tool:pwsh",
+ 		order: 105,
+-		text: "Non-zero exits are reported as `[exit code: N]` markers; investigate failures before moving on. On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure."
++		text: "Non-zero exits are reported as `[exit code: N]` markers; investigate failures before moving on. pwsh commands fail fast: a failing cmdlet (or native command on PowerShell 7.3+) aborts the script and reports the error — do not write commands that depend on errors continuing silently. On Windows a killed process settles as `[exit code: 1]` without a signal marker; treat a bare exit 1 after an interruption as a termination, not a command failure."
+ 	});
+ 	ctx.tools.register(defineTool({
+ 		name: "pwsh",
