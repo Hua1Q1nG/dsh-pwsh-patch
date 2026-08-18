@@ -11,7 +11,7 @@ const payload = JSON.parse(readFileSync(join(HERE, "payload.json"), "utf8"));
 function findInstall() {
   if (process.env.DSH_INSTALL_DIR) return process.env.DSH_INSTALL_DIR;
   if (process.env.DSH_PWSH_TEST_INSTALL) return process.env.DSH_PWSH_TEST_INSTALL;
-  for (const dir of ["E:/program(E)/DSH/DSH Desktop", "C:/Program Files/DSH Desktop"]) {
+  for (const dir of ["C:/Program Files/DSH Desktop", "C:/Program Files (x86)/DSH Desktop"]) {
     if (existsSync(join(dir, "resources", "app", "package.json"))) return dir;
   }
   return undefined;

@@ -12,7 +12,7 @@ const payload = loadPayload(PLUGIN_DIR);
 
 function findLiveInstall() {
   if (process.env.DSH_PWSH_TEST_INSTALL) return process.env.DSH_PWSH_TEST_INSTALL;
-  const candidates = ["E:/program(E)/DSH/DSH Desktop", "C:/Program Files/DSH Desktop"];
+  const candidates = ["C:/Program Files/DSH Desktop", "C:/Program Files (x86)/DSH Desktop"];
   for (const dir of candidates) if (existsSync(join(dir, "resources", "app", "package.json"))) return dir;
   return undefined;
 }
